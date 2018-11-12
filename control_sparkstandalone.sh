@@ -12,7 +12,8 @@ SPARKVER=2.4.0
 VOLUMEMAPS="-v /mnt/acadia:/datahub-acadia -v /mnt/irp210:/datahub-210"
 
 # PUREBACKEND can either be 'block' (FlashArray) or 'file' (Flashblade)
-PUREBACKEND=file
+PUREBACKEND=block
+
 
 # ==== HELPER FUNCTION =============
 # Run the same command on all non-master nodes.
@@ -35,6 +36,7 @@ if [ "$1" == "start" ]; then
 
 	if [ "$2" == "cluster" ]; then
 		echo "Starting Standalone cluster"
+		set -e
 
 		echo "Checking for latest container image."
 		./build_image.sh
@@ -48,12 +50,12 @@ if [ "$1" == "start" ]; then
 		docker exec fbsparkmaster /opt/spark/sbin/start-master.sh
 
 		echo "Creating node-local volumes for workers using class=$PUREBACKEND..."
-		multicmd docker volume create --driver=pure -o size=1TiB \
+		multicmd sudo docker volume create --driver=pure -o size=1TiB \
 			-o volume_label_selector="purestorage.com/backend=$PUREBACKEND" \
 			sparklocal
 		
 		echo "Starting workers..."
-		multicmd docker run --privileged -d --rm --net=host \
+		multicmd sudo docker run --privileged -d --rm --net=host \
 			$VOLUMEMAPS \
 			-v sparklocal:/local \
 			-e SPARK_LOCAL_DIRS=/local \
