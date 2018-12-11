@@ -3,16 +3,18 @@
 
 # ==== CONFIGURABLES ===============
 
-# How to find the docker image
-REPONAME=joshuarobinson
-SPARKVER=2.4.0
+# Spark image to use: docker repository and tag.
+SPARKIMG=joshuarobinson/fb-spark-2.4.0
 
 # List of mounted NFS paths that should be exposed to Spark as datahub paths.
 # Assumes some other mechanism ensures mounting.
 VOLUMEMAPS="-v /mnt/acadia:/datahub-acadia -v /mnt/irp210:/datahub-210"
 
 # PUREBACKEND can either be 'block' (FlashArray) or 'file' (Flashblade)
-PUREBACKEND=block
+PUREBACKEND=file
+
+#  Designate the Spark cluster master as the node this script is run from.
+MASTER=$(hostname)
 
 
 # ==== HELPER FUNCTION =============
@@ -23,23 +25,22 @@ function multicmd {
 	done
 }						
 
-#  Designate the Spark cluster master as the node this script is run from.
-MASTER=$(hostname)
-
-# Spark image to use: docker repository and tag.
-SPARKIMG=$REPONAME/fb-spark-$SPARKVER
+# === Constants that should not need to be changed. ====
 
 # Directory for Spark binary, assumes this layout inside the docker image.
 SPARKDIR=/opt/spark
+
+# Name for the docker volumes created for per-node scratch space.
+SCRATCHVOL=sparkscratch
+
+# === Control Code ====
 
 if [ "$1" == "start" ]; then
 
 	if [ "$2" == "cluster" ]; then
 		echo "Starting Standalone cluster"
-		set -e
 
-		echo "Checking for latest container image."
-		./build_image.sh
+		echo "Syncing latest container image on all hosts."
 		multicmd docker pull $SPARKIMG
 
 		echo "Starting Spark master..."
@@ -50,14 +51,14 @@ if [ "$1" == "start" ]; then
 		docker exec fbsparkmaster /opt/spark/sbin/start-master.sh
 
 		echo "Creating node-local volumes for workers using class=$PUREBACKEND..."
-		multicmd sudo docker volume create --driver=pure -o size=1TiB \
+		multicmd docker volume create --driver=pure -o size=1TiB \
 			-o volume_label_selector="purestorage.com/backend=$PUREBACKEND" \
-			sparklocal
+			$SCRATCHVOL
 		
 		echo "Starting workers..."
-		multicmd sudo docker run --privileged -d --rm --net=host \
+		multicmd sudo docker run -d --rm --net=host \
 			$VOLUMEMAPS \
-			-v sparklocal:/local \
+			-v $SCRATCHVOL:/local \
 			-e SPARK_LOCAL_DIRS=/local \
 			-e SPARK_WORKER_DIR=/local \
 			--name fbsparkworker \
@@ -75,6 +76,7 @@ if [ "$1" == "start" ]; then
 		       	-e PYSPARK_DRIVER_PYTHON_OPTS="notebook --ip=irvm-joshua --no-browser --notebook-dir=/datahub-210/" \
 			$VOLUMEMAPS \
 			$SPARKIMG \
+			--conf spark.hadoop.fs.s3a.fast.upload.buffer=array \
 		       	--conf spark.driver.port=7099 \
 			--master spark://$MASTER:7077 \
 			--executor-memory 128G \
@@ -89,7 +91,8 @@ if [ "$1" == "start" ]; then
 			$SPARKIMG \
 			--conf spark.driver.port=7099 \
 			--master spark://$MASTER:7077 \
-			--executor-memory 128G
+			--executor-memory 128G \
+			--driver-memory 32G
 	else
 		echo "Usage: $0 $1 [cluster|jupyter|shell]"
 	fi
@@ -108,7 +111,7 @@ elif [ "$1" == "stop" ]; then
 	docker stop fbsparkmaster
 
 	echo "Removing node-local volumes"
-	multicmd docker volume rm sparklocal
+	multicmd docker volume rm $SCRATCHVOL
 
 else
 	echo "Usage: $0 [start|stop]"
