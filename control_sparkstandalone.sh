@@ -6,6 +6,10 @@
 # Spark image to use: docker repository and tag.
 SPARKIMG=joshuarobinson/fb-spark-2.4.0
 
+# Where to find the configuration values for Spark.
+# Note, must be an absolute path for the volume mapping to work.
+SPARKCFG=${PWD}/spark-defaults.conf
+
 # List of mounted NFS paths that should be exposed to Spark as datahub paths.
 # Assumes some other mechanism ensures mounting.
 VOLUMEMAPS="-v /mnt/acadia:/datahub-acadia -v /mnt/irp210:/datahub-210"
@@ -37,6 +41,13 @@ SCRATCHVOL=sparkscratch
 
 if [ "$1" == "start" ]; then
 
+	# Sanity checking to ensure the Spark config exists.
+	if [ ! -e $SPARKCFG ]; then
+		echo "Spark config $SPARKCFG not found."
+		exit 1
+	fi
+
+	# Startup Spark cluster services.
 	if [ "$2" == "cluster" ]; then
 		echo "Starting Standalone cluster"
 
@@ -75,6 +86,7 @@ if [ "$1" == "start" ]; then
 			-e PYSPARK_DRIVER_PYTHON=jupyter \
 		       	-e PYSPARK_DRIVER_PYTHON_OPTS="notebook --ip=irvm-joshua --no-browser --notebook-dir=/datahub-210/" \
 			$VOLUMEMAPS \
+			-v $SPARKCFG:/opt/spark/conf/spark-defaults.conf \
 			$SPARKIMG \
 			--conf spark.hadoop.fs.s3a.fast.upload.buffer=array \
 		       	--conf spark.driver.port=7099 \
@@ -88,6 +100,7 @@ if [ "$1" == "start" ]; then
 		docker run -it --name fbsparkdriver --rm --net=host \
 			--entrypoint=/opt/spark/bin/spark-shell \
 			$VOLUMEMAPS \
+			-v $SPARKCFG:/opt/spark/conf/spark-defaults.conf \
 			$SPARKIMG \
 			--conf spark.driver.port=7099 \
 			--master spark://$MASTER:7077 \

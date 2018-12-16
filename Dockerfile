@@ -1,4 +1,4 @@
-FROM openjdk:8
+FROM openjdk:8-slim
 
 # Variables that define which software versions to install.
 ARG SCALA_VER=2.11.8
@@ -6,7 +6,7 @@ ARG SPARK_VERSION
 ARG HADOOP_VERSION=2.7
 
 # Packages.
-RUN apt-get update && apt-get install -y python3 python3-pip 
+RUN apt-get update && apt-get install -y curl procps python3 python3-pip
 RUN pip3 install jupyter opencv-python matplotlib sklearn
 
 # Download and install Scala.
@@ -28,16 +28,16 @@ RUN curl -O  https://archive.apache.org/dist/hadoop/core/hadoop-2.7.3/hadoop-2.7
 	&& rm -r hadoop-2.7.3/ \
 	&& rm hadoop-2.7.3.tar.gz
 
-COPY spark-defaults.conf /opt/spark/conf/
-
+# Create sparkuser to run Spark services as (instead of root).
 RUN groupadd -g 1080 sparkuser && \
     useradd -r -m -u 1080 -g sparkuser sparkuser && \
     chown -R -L sparkuser /opt/spark && \
     chgrp -R -L sparkuser /opt/spark
-
 USER sparkuser
 WORKDIR /home/sparkuser
 
 ENV PYSPARK_PYTHON=python3
 
+# Trick to create an idle process to keep the container running. Necessary to
+# work with the Spark cluster scripts.
 ENTRYPOINT ["tail", "-f", "/dev/null"]
