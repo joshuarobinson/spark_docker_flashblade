@@ -1,5 +1,6 @@
 #!/bin/bash
 
+# This script creates and tears down a Spark Standalone cluster.
 
 # ==== CONFIGURABLES ===============
 
@@ -10,11 +11,13 @@ SPARKIMG=joshuarobinson/fb-spark-2.4.0
 # Note, must be an absolute path for the volume mapping to work.
 SPARKCFG=${PWD}/spark-defaults.conf
 
-# List of mounted NFS paths that should be exposed to Spark as datahub paths.
-# Assumes some other mechanism ensures mounting.
-VOLUMEMAPS="-v /mnt/acadia:/datahub-acadia -v /mnt/irp210:/datahub-210"
+# NFS datahub mount details that should be exposed to Spark. Assumes this
+# filesystem already exists.
+DATAHUB_IP="10.62.64.200"
+DATAHUB_FS="root"
 
-# PUREBACKEND can either be 'block' (FlashArray) or 'file' (Flashblade)
+# PUREBACKEND can either be 'block' (FlashArray) or 'file' (FlashBlade) for
+# per-node scratch space.
 PUREBACKEND=file
 
 #  Designate the Spark cluster master as the node this script is run from.
@@ -55,8 +58,10 @@ if [ "$1" == "start" ]; then
 		multicmd docker pull $SPARKIMG
 
 		echo "Starting Spark master..."
+		docker volume create --driver local --opt type=nfs --opt o=addr=$DATAHUB_IP,rw \
+			--opt=device=:/$DATAHUB_FS spark-datahub
 		docker run -d --rm --net=host \
-			$VOLUMEMAPS \
+			-v spark-datahub:/datahub \
 			--name fbsparkmaster \
 			$SPARKIMG
 		docker exec fbsparkmaster /opt/spark/sbin/start-master.sh
@@ -65,10 +70,13 @@ if [ "$1" == "start" ]; then
 		multicmd docker volume create --driver=pure -o size=1TiB \
 			-o volume_label_selector="purestorage.com/backend=$PUREBACKEND" \
 			$SCRATCHVOL
+		echo "Attaching NFS datahub mount to workers..."	
+		multicmd docker volume create --driver local --opt type=nfs --opt o=addr=$DATAHUB_IP,rw \
+			--opt=device=:/$DATAHUB_FS spark-datahub
 		
 		echo "Starting workers..."
 		multicmd sudo docker run -d --rm --net=host \
-			$VOLUMEMAPS \
+			-v spark-datahub:/datahub \
 			-v $SCRATCHVOL:/local \
 			-e SPARK_LOCAL_DIRS=/local \
 			-e SPARK_WORKER_DIR=/local \
@@ -80,12 +88,13 @@ if [ "$1" == "start" ]; then
 		echo "Access Spark Cluster UI at http://$MASTER:8080"
 	
 	elif [ "$2" == "jupyter" ]; then
+		echo "Starting Jupyter notebook server..."
 		docker run -d --name fbsparkjupyter --rm --net=host \
 			--entrypoint=/opt/spark/bin/pyspark \
 			-e PYSPARK_PYTHON=python3 \
 			-e PYSPARK_DRIVER_PYTHON=jupyter \
-		       	-e PYSPARK_DRIVER_PYTHON_OPTS="notebook --ip=irvm-joshua --no-browser --notebook-dir=/datahub-210/" \
-			$VOLUMEMAPS \
+		       	-e PYSPARK_DRIVER_PYTHON_OPTS="notebook --ip=irvm-joshua --no-browser --notebook-dir=/datahub/" \
+			-v spark-datahub:/datahub \
 			-v $SPARKCFG:/opt/spark/conf/spark-defaults.conf \
 			$SPARKIMG \
 			--conf spark.hadoop.fs.s3a.fast.upload.buffer=array \
@@ -97,9 +106,10 @@ if [ "$1" == "start" ]; then
 		docker logs -f fbsparkjupyter
 	
 	elif [ "$2" == "shell" ]; then
+		echo "Starting Scala shell..."
 		docker run -it --name fbsparkdriver --rm --net=host \
 			--entrypoint=/opt/spark/bin/spark-shell \
-			$VOLUMEMAPS \
+			-v spark-datahub:/datahub \
 			-v $SPARKCFG:/opt/spark/conf/spark-defaults.conf \
 			$SPARKIMG \
 			--conf spark.driver.port=7099 \
@@ -122,6 +132,9 @@ elif [ "$1" == "stop" ]; then
 	echo "Stopping all running containers"
 	multicmd docker stop fbsparkworker
 	docker stop fbsparkmaster
+
+	multicmd docker volume rm spark-datahub
+	docker volume rm spark-datahub
 
 	echo "Removing node-local volumes"
 	multicmd docker volume rm $SCRATCHVOL
