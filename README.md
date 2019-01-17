@@ -13,5 +13,8 @@ Spark Standalone cluster.
 {GenerateTestData|RunClustering}.ipynb : Python notebooks demonstrating clustering algorithm.
 
 Requirements for using these scripts:
-  * node_list.txt: a list of hostnames, one per line, to use in the Spark cluster.
-  * spark-defaults.conf: configuration for Spark, can be created with config_s3.py
+  * Docker installed and access to a Docker repository.
+  * Purity_fb python SDK installed (via pip).
+  * FlashBlade management token for accessing REST API.
+  * Ansible configured with the host group containing all spark worker nodes. 
+  * credentials: file containing S3 access/secret keys, can be created with config_s3.py
